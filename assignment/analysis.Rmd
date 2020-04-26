@@ -1,0 +1,543 @@
+---
+title: "Analysis Assignment"
+author: "Diana Lin"
+date: "02/03/2020"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages, message = FALSE, warning = FALSE, echo = FALSE}
+library(tidyverse)
+library(here)
+```
+## Table of Contents
+
+1. [Question 1](#question-1-data-inspection-and-basic-manipulation)
+    1. [Question 1.1](#q11-importing-the-data-and-getting-familiar-with-it-2-points)
+    1. [Question 1.2](#q12-data-manipulation-2-points)
+1. [Question 2](#question-2-assessing-overall-data-quality)
+    1. [Question 2.1](d#q21-overall-distributions-4-points)
+    1. [Question 2.2](#q22-how-do-the-samples-correlate-with-one-another-4-points)
+1. [Question 3](#question-3-conducting-differential-expression-analysis)
+    1. [Question 3.1](#q31-remove-lowly-expressed-genes-3-points)
+    1. [Question 3.2](#q32-construct-linear-model-4-points)
+    1. [Question 3.3](#q33-interpret-model-2-points)
+1. [Question 4](#question-4-evaluating-the-results)
+    1. [Question 4.1](#q41-quantifying-the-number-of-genes-differentially-expressed-3-points)
+    1. [Question 4.2](#q42-interpret-the-interaction-term-3-points)
+1. [Summary](#summary)
+    1. [Question 1](#question-1)
+    1. [Question 2](#question-2)
+    1. [Question 3](#question-3)
+    1. [Question 4](#question-4)
+1. [Bonus Question](#bonus-question-2-points)
+  
+## Question 1: Data Inspection and Basic Manipulation
+
+### Q1.1 Importing the data and getting familiar with it (2 POINTS)
+
+> Read the datasets into R.
+
+```{r load data}
+metadata <-
+  readRDS(here("assignment", "data", "gse60019_experiment_design.RDS"))
+expr <-
+  readRDS(here("assignment", "data", "gse60019_expression_matrix.RDS"))
+```
+The [metadata](https://github.com/STAT540-UBC/STAT540-UBC.github.io/raw/master/homework/assignment/data/gse60019_experiment_design.RDS) and [expression](https://github.com/STAT540-UBC/STAT540-UBC.github.io/raw/master/homework/assignment/data/gse60019_expression_matrix.RDS) data were downloaded and read into R using `readRDS()`.
+
+> How many genes are there?
+
+```{r count genes}
+num_genes <- nrow(expr)
+```
+
+Each row in the expression matrix corresponds to one gene. There are `r num_genes` genes in the dataset.
+
+> How many samples are there?
+
+```{r count samples}
+num_samples <- nrow(metadata)
+```
+
+Each row in the metadata matrix corresponds to one sample. There are `r num_samples` samples in the dataset.
+
+> How many factors are in our experimental design? How many levels per factor? List out the levels for each factor.
+
+In the experimental design (metadata), each column is a factor except for `sample`, which is a character, as seen below: 
+
+```{r column types}
+(columns <- sapply(metadata,class))
+```
+
+The number of levels of each factor are seen below:
+
+```{r num factors}
+(factors <- sapply(metadata[-1],nlevels))
+```
+The levels for each factor are seen below: 
+```{r list levels}
+(all_levels <- sapply(metadata[-1],levels))
+```
+
+#### Factor Summary
+
+Here is a summary of our factors:
+
+Metadata | Number of Levels | Levels
+---------|------------------|----------------------
+`organism_part` | `r factors[["organism_part"]]` | `r all_levels[["organism_part"]]`
+`cell_type` | `r factors[["cell_type"]]` | `r all_levels[["cell_type"]]`
+`time_point` | `r factors[["time_point"]]` | `r all_levels[["time_point"]]`
+`batch` | `r factors[["batch"]]` | `r all_levels[["batch"]]`
+
+### Q1.2 Data manipulation (2 POINTS) 
+
+> The levels of the factor `time_point` actually refer to points on a continous axis. In other words, it doesn't have to be interpreted as strictly categorical variable. In order to make graphing easier, it will be helpful to convert this variable to a numeric representation.
+
+>Create a new column in the samples metadata tibble. Call it "age" and populate it with the appropriate numeric values. Hint: Assume that the mouse gestation length is 18 days (ie. P0 = 18).
+
+Since the mouse gestation period is 18 days, E16 becomes day 16, P0 becomes day 18, P4 becomes day 22, and P7 will become day 25.
+
+Developmental Stage | Age
+--------------------|----------
+`E16` | 16 days
+`P0` | 18 days
+`P4` | 22 days
+`P7` | 25 days
+
+A new column called `age` is created:
+
+```{r add age}
+metadata <- metadata %>%
+  mutate(
+    age = case_when(
+      time_point == "E16" ~ 16,
+      time_point == "P0" ~ 18,
+      time_point == "P4" ~ 22,
+      time_point == "P7" ~ 25
+    )
+  ) %>%
+  select(-time_point)
+```
+
+> Find the expression profile for the gene **`Vegfa`**. Make a scatterplot with age on the x-axis and expression value in CPM on the y-axis. Color the data points by cell_type. Add in a regression line for each cell type.
+
+Using `geom_smooth()`, a linear regression line can be added for each cell type:
+```{r plot Vegfa, fig.align='center'}
+# pivot to longer format
+expr_long <- expr %>%
+  pivot_longer(cols = c(-gene), names_to = "sample") %>%
+  rename(CPM = value)
+
+expr_long_full <- expr_long %>% 
+  left_join(metadata, by = "sample")
+
+expr_long_full %>%
+  filter(gene == "Vegfa") %>%
+  ggplot(aes(x = age, y = CPM, color = cell_type)) +
+  geom_point() +
+  #  geom_point(position = position_jitter()) +
+  geom_smooth(method = "lm") +
+  ggtitle("Gene Expression of Vegfa") +
+  xlab("Age (days)") 
+```
+
+> Is there sign of interaction between `cell_type` and `age` for **`Vegfa`**? Explain using what you observed in your graph from the previous question.
+
+There is no interaction between `cell_type` and `age` for `Vegfa`, as the two lines in the graph above are parallel. If there was interaction between `cell_type` and `age`, the slopes of the lines would be signficantly different. Although it is evident that `cell_type` has an effect on gene expression, there is no evidence to support that there is an interaction between `cell_type` and `age`. 
+
+This is further shown by the code below, where `cell_typesensory_hair_cell:age` is not significant:
+
+```{r prove-no-interaction}
+vegfa <- expr_long_full %>%
+  filter(gene == "Vegfa")
+
+summary(lm(CPM ~ cell_type * age, data = vegfa))
+```
+
+The `summary(lm())` of an additive model with an interaction term shows the same results:
+```{r summary-lm-interaction}
+summary(lm(CPM ~ cell_type + age + age:cell_type, data = vegfa))
+```
+
+## Question 2: Assessing overall data quality
+
+### Q2.1 Overall distributions (4 POINTS)
+
+> The expression values are currently in CPM. Log<sub>2</sub> transform them so that the distribution is more evenly spread out and can be examined more easily.
+
+To log<sub>2</sub> transform CPM, `mutate(logCPM = log2(CPM))` is used:
+```{r logtransform, fig.align='center'}
+# log transform all the values for limma later
+expr_log <- expr %>%
+  column_to_rownames(var = "gene") %>%
+  map_dfc(log2) %>%
+  as.data.frame() # can't add rownames on a tibble, convert to dataframe
+
+rownames(expr_log) <- expr$gene # add row names back
+
+# log transform and add to the dataframe
+expr_long_full_log <- expr_long_full %>%
+  mutate(logCPM = log2(CPM))
+
+expr_long_full_log %>%
+  filter(gene == "Vegfa") %>%
+  ggplot(aes(x = age, y = logCPM, color = cell_type)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  ggtitle("Gene Expression of Vegfa") +
+  xlab("Age (days)") +
+  ylab("log2(CPM)")
+```
+
+
+> Examine the distribution of gene expression across all samples using:
+
+> 1. Box plots
+  > + For the box plots, samples should be on the x-axis and expression should be on the y-axis.
+> 2. Overlapping density plots
+  > + For the overlapping density plots, expression should be on the x-axis and density should be on the y-axis. 
+  > + Lines should be colored by sample (i.e. one line per sample).
+  > + **Hint**: There are a number of data manipulation steps required. Look at the `melt()` function in `reshape2`.
+
+> Which two samples stand out as different, in terms of the distribution of expression values, compared to the rest?
+
+According to the boxplot below, samples `GSM1463879` and `GSM1463880` stand out in terms of distribution, compared to the others.
+
+```{r boxplot, fig.align='center'}
+expr_long_full_log %>%
+  ggplot(aes(x = sample, y = logCPM)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ylab("log2(CPM)") +
+  ggtitle("Boxplot of Gene Expression per Sample")
+```
+
+By looking at the boxplot, two samples, where the minimum (bottom of the box) is different, stand out. To find out those sample names:
+```{r find-sample}
+(
+  diff_samples <- expr_long_full_log %>%
+    group_by(sample) %>%
+    summarize(min = min(logCPM)) %>%
+    arrange(desc(min)) %>%
+    select(sample) %>%
+    head(n = 2L) %>%
+    pull()
+)
+
+# format answer into a character string
+suppressMessages(library(glue))
+diff_samples_phrase <- glue("`{diff_samples[1]}` and `{diff_samples[2]}`")
+```
+According to the box plot, the two samples that are different are`r diff_samples_phrase`.
+
+According to the overlapping density plot below, samples `GSM1463879` and `GSM1463880` stand out in terms of distribution, compared to the others. These two samples in turqouise, correspond to the large peak at `y = 0.20`.
+```{r density plot, fig.align='center'}
+expr_long_full_log %>%
+  ggplot(aes(x = logCPM, colour = sample)) +
+  geom_density() +
+  xlab("log2(CPM)") +
+  ggtitle("Density Plot of Gene Expression per Sample")
+```
+
+### Q2.2 How do the samples correlate with one another? (4 POINTS)
+
+> Examine the correlation between samples using one or more heatmaps (i.e. samples should be on the x axis and the y axis, and the values in the heatmap should be correlations). Again, use the log<sub>2</sub> transformed expression values. Display `cell_type`, `organism_part`, `age`, and `batch` for each sample in the heatmap. **Hint:** Consider using `pheatmap()` with annotations and cor to correlate gene expression between each pair of samples.
+
+```{r heatmap, fig.align='center'}
+suppressMessages(library(pheatmap))
+
+# create correlation matrix using log values
+cor_expr_log <- cor(expr_log)
+
+# metadata matrix for annotation
+annotation <- metadata %>%
+  column_to_rownames("sample")
+
+pheatmap(
+  cor_expr_log,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  scale = "none",
+  clustering_method = "average",
+  clustering_distance_cols = "euclidean",
+  show_colnames = T,
+  show_rownames = T,
+  annotation = annotation,
+  main = "Correlation Heatmap of\nGene Expression per Sample"
+)
+```
+
+> Among the factors `cell_type`, `organism_part`, `age`, and `batch`, which one seems to be most strongly correlated with clusters in gene expression data? **Hint:** Consider using `cluster_rows=TRUE` in `pheatmap()`.
+
+According to the heatmap above, the factor `cell_type` seems to be the most strongly correlated with clusters in the gene expresion data. The red boxes in the heatmap correspond to the orange boxes in `cell_type`, corresponding to `surrounding_cell`.
+
+> There is a sample whose expression values correlate with the samples of the different `cell_type` just as well as with the samples of the same `cell_type`. Identify this sample by its ID.
+
+```{r variance}
+vars <- map_dbl(as.data.frame(cor_expr_log), var)
+
+min <- min(vars)
+
+for (i in seq_along(vars)) {
+  if (min == vars[i]) {
+    answer <- names(vars)[i]
+    break
+  }
+}
+```
+
+Looking at the heatmap above, it looks like the sample is either GSM1463872 or GSM1463874. The sample with the least difference between samples within cell types and across cell types means there should be very low spread among these correlation values. To determine which two of our 'eyeballed' samples this is, some calculations can be done. Calculating variance for each column of the correlation matrix and finding the sample corresponding to the minimum determines that this sample is `r answer`.
+
+## Question 3: Conducting differential expression analysis
+
+### Q3.1 Remove lowly expressed genes (3 POINTS)
+
+> Remove lowly expressed genes by retaining genes that have CPM < 1 in at least as many samples as the smallest group size (i.e use `table()` to identify the number of samples belonging to each treatment group. The smallest group size is the smallest number in that table). Each treatment group consists of subjects belong to a unique combination of `cell_type` and `organism_part`.
+
+> How many genes are there after filtering?
+
+```{r groupsize}
+# find smallest group size for each treatment group
+(minimum_num <- metadata %>%
+   select(organism_part, cell_type) %>%
+   table() %>%
+   min())
+```
+The smallest group size is `r minimum_num`.
+
+To retain genes that have CPM > 1 in at least 4 samples, the dataframe is looped through, filtering for each gene and CPM > 1 in each iteration:
+```{r filter, cache = TRUE}
+# use cache = TRUE to reduce knitting time
+suppressMessages(library(purrr))
+
+# get master list of all genes
+all_genes <- expr$gene
+
+kept_genes <- map_chr(all_genes, function(x)
+  if ((expr_long %>%
+       filter(gene == x , CPM > 1) %>%
+       nrow() >= 4)) {
+    x
+  } else {
+    NA # use NA, because if nothing, then it is NULL and causes problems
+  })
+
+# remove NA values
+kept_genes <- kept_genes[!is.na(kept_genes)]
+
+# Update each copy of the dataframe
+# Original expression dataframe, logged all values, filtered genes
+expr_log_filtered <- expr_log[kept_genes,]
+
+# Long format expression, with metadata, logged CPM, and filtered genes
+expr_long_full_log_filtered <- expr_log_filtered %>%
+  rownames_to_column(var = "gene") %>%
+  pivot_longer(cols = c(-gene), names_to = "sample") %>%
+  rename(logCPM = value) %>%
+  left_join(metadata, by = "sample")
+  
+# Original
+expr_filtered <- (expr %>% column_to_rownames(var = "gene"))[kept_genes,]
+
+(num_kept_genes <- length(kept_genes))
+
+```
+`r num_kept_genes` genes out of `r length(all_genes)` remain after filtering.
+
+### Q3.2 Construct linear model (4 POINTS)
+
+> Use limma to fit a linear model with `cell_type`, `organism_part`, `age` and the interaction between `age` and `cell_type` as covariates (**Hint:** use `lmFit` and `eBayes`). Use the logCPM value instead of CPM to fit the linear model (Why?). Before you do this, reformat the data frame so that gene IDs are row names, and not a column (`limma` requires the dataset in this format).
+
+First, a design matrix is constructed:
+```{r design}
+# construct design matrix
+design_matrix <-
+  model.matrix( ~ cell_type + organism_part + age + age:cell_type, data = metadata)
+
+```
+
+Next, to run `lmFit()`:
+```{r lmfit}
+suppressMessages(library(limma))
+expr_log_filtered <- as.data.frame(map_dfc(expr_filtered, log2))
+rownames(expr_log_filtered) <- rownames(expr_filtered)
+lm_fit <- lmFit(expr_log_filtered, design_matrix)
+
+summary(lm_fit)
+```
+
+Next, to run `eBayes()`:
+```{r ebayes}
+eb_fit <- eBayes(lm_fit)
+summary(eb_fit)
+```
+
+### Q3.3: Interpret model (2 POINTS)
+
+> For the gene `Eva1a`, what is the numeric value of the coeffcient of the age term? What does it mean?
+
+```{r eva1a}
+# get coefficients.age from eb_fit
+(coeff_age <- as.data.frame(eb_fit) %>%
+  rownames_to_column(var = "gene") %>%
+  filter(gene == "Eva1a") %>%
+  select(coefficients.age))
+
+# get topTable for Eva1a
+(topTable_Eva <- topTable(eb_fit, coef = "age", number = Inf) %>%
+  rownames_to_column(var = "gene") %>%
+  filter(gene == "Eva1a"))
+
+# check what value coefficients.age corresponds to in topTable 
+for (i in seq_along(topTable_Eva)) {
+  if (coeff_age == topTable_Eva[i]) {
+    coeff_age_meaning <- colnames(topTable_Eva)[i]
+    break
+  }
+}
+```
+The numerical value of the coefficient of age term is `r coeff_age`, which represents the log<sub>2</sub> fold change in expression for `Eva1a`, since it is the same value under `r coeff_age_meaning` in `topTable(coef = "age")`. This means that log<sub>2</sub>FC of `r coeff_age` is a `r 2**coeff_age` fold change in gene expression, since `FC = 2**(log2FC)`.
+
+## Question 4: Evaluating the results
+
+### Q4.1: Quantifying the number of genes differentially expressed (3 POINTS)
+
+> Using the linear model defined above, determine the number of genes differentially expressed by cell type at an FDR (use `adjust.method = "fdr"` in `topTable()`) less than 0.05.
+
+```{r fdr}
+de_genes <-
+  topTable(
+    eb_fit,
+    coef = "cell_typesensory_hair_cell",
+    number = Inf,
+    adjust.method = "fdr",
+    p.value = 0.05,
+    sort.by = "logFC"
+  )
+num_genes_de <- nrow(de_genes)
+
+if (num_genes_de != 0 ) {
+  head(de_genes)
+}
+```
+The number of differentially expressed genes by `cell_type` at an FDR of 0.05 is `r num_genes_de`.
+
+### Q4.2: Interpret the interaction term (3 POINTS)
+
+> Explain what you are modeling with this interaction term. For a particular gene, what does a signifcant interaction term mean?
+
+The interaction term of `age:cell_typesensory_hair_cell` shows whether or not `cell_type` has an effect on gene expression at different ages for that particular gene. Interactiont terms in general show whether two covariates have a combined effect on gene exprssion.
+
+If we look back at the gene `Vegfa` from [Q1.2](#q12-data-manipulation-2-points), there was no interaction effect using `lm()`.
+
+```{r vegfa-again}
+summary(lm(CPM ~ cell_type + organism_part + age + age:cell_type, data = vegfa))
+```
+
+The coefficient estimate for `Vegfa` for `cell_typesensory_hair_cell:age` is `r summary(lm(CPM ~ cell_type + organism_part + age + age:cell_type, data = vegfa))$coefficients['cell_typesensory_hair_cell:age','Estimate']`.
+
+Looking at all genes, the interaction effect for `age` and `cell_type` remains minimal.
+```{r lm-confirm}
+summary(lm(CPM ~ cell_type + organism_part + age + age:cell_type, data = expr_long_full_log))
+```
+The coefficient estimate for all genes for the interaction effect of `age` and `cell_type` interaction is `r summary(lm(CPM ~ cell_type + organism_part + age + age:cell_type, data = expr_long_full_log))$coefficients['cell_typesensory_hair_cell:age','Estimate']`.
+
+Looking at the top 10 genes in the interaction coefficient for `limma`, the `logFC` is extremely low when compared to the differentially expressed genes, meaning that there is no signficant interaction.
+
+These are the top 10 differentially expressed genes for the interaction coefficient for `cell_typesensory_hair_cell:age`:
+
+```{r explain1}
+topTable(
+  eb_fit,
+  coef = "cell_typesensory_hair_cell:age",
+  adjust.method = "fdr",
+  p.value = 0.05,
+  sort.by = "logFC"
+)
+```
+
+These are the top 10 differentially expressed genes for the interaction coefficient for all covariates.
+```{r explain2}
+topTable(
+  eb_fit,
+  adjust.method = "fdr",
+  p.value = 0.05
+)
+```
+
+Compared to other covariates that have significant effects, the interaction effect of `age` and `cell_type` is minimal, as depicted in the two `topTable()` outputs above.
+
+### Summary
+
+Below is a summary of my responses to each question that only requires a simple, (one or two word) response. Questions that require a longer explanation are **not** summarized in the tables below, but can still be found in their respective sections.
+
+#### Question 1
+
+Question | Answer 
+---------|-----------
+How many genes are there? | `r num_genes`
+How many samples are there? | `r num_samples`
+Is there sign of interaction between `cell_type` and `age` for **`Vegfa`**?| No
+How many factors are in our experimental design? How many levels per factor? List out the levels for each factor. | see [table](#factor-summary)
+
+
+#### Question 2
+
+Question | Answer
+---------|----------
+Which two samples stand out as different, in terms of the distribution of expression values, compared to the rest? | `r diff_samples`
+Among the factors `cell_type`, `organism_part`, `age`, and `batch`, which one seems to be most strongly correlated with clusters in gene expression data?|`cell_type`
+There is a sample whose expression values correlate with the samples of the different `cell_type` just as well as with the samples of the same `cell_type`. Identify this sample by its ID.| `r answer`
+
+#### Question 3
+
+Question | Answer
+---------|----------
+How many genes are there after filtering? | `r num_kept_genes`
+For the gene `Eva1a`, what is the numeric value of the coeffcient of the age term? | `r coeff_age`
+
+#### Question 4
+
+Question | Answer
+---------|----------
+Using the linear model defined above, determine the number of genes differentially expressed by cell type at an FDR less than 0.05. | `r num_genes_de`
+
+
+### Bonus Question (2 POINTS)
+
+> Compare your results to those obtained by Scheffer et al (2015). Discuss any discrepancies. List at least three explanations for these discrepancies.
+
+In [Scheffer et al (2015)](../paper_review/paper.pdf), they found genes that were differentially expressed in hair cells, and genes that were differentially expressed in  surrounding cells.
+
+> Among the 20,207 annotated mouse genes, only 2008 genes were not expressed (<15 total read counts). Among the remaining 18,199 genes, 5430 were found to be preferentially expressed in HCs (including the genes with no reads in the SCs) and 3230 in SCs; 9539 were expressed in both.
+
+In my analysis, I found `r num_genes_de` differentially expressed genes by cell type. This is the biggest and most important discrepancy, as finding differentially expressed genes is one of the main goals of this paper. Three reasons for this discrepancy are:
+
+1. While Scheffer et al. treated the time points as categorical variables of `E16`, `P0`, `P4`, `P7`, in my analysis, they were translated into a continuous variable, where the gestation period used was 18 days. The conversion is as follows, taking from [Q1.2](#q12-data-manipulation-2-points) above:
+
+    > Developmental Stage | Age
+    > --------------------|----------
+    > `E16` | 16 days
+    > `P0` | 18 days
+    > `P4` | 22 days
+    > `P7` | 25 days
+  
+1. Additionally, this translation is not the conventional way of translating developmental stages into a linear, continuous variable. If the gestational period was 18 days, the conventional translation would be as defined below, where pre-natal/embryonic stages are denoted as negative numbers:
+
+    Developmental Stage | Age
+    --------------------|----------
+    `E16` | -2 days
+    `P0` | 0 days
+    `P4` | 4 days
+    `P7` | 7 days
+
+    Using this translation, there is a clear, intuitive distinction between embryonic/pre-natal developmental age and post-natal age, as these stages are inherently different and should not be lumped together.
+
+1. Furthermore, the gestational period of 18 days was instructed to be used. In the original paper, Scheffer et al. never described the gestational period of the mice they used in their experiment, and this 'arbitrarily' chosen gestation period could be the culprit for the discrepancies as well.
+
+Scheffer et al. did not make any effort into sharing their processed data (i.e. after CPM normalization). The data shared were the raw RNA-seq reads deposited in the SRA. The GEO submission did not include any processed expression data, which makes their analysis minimally reproducible, so discrepancies as such are expected. To maximize reproducibility, Scheffer et al. should have provided access to both the raw RNA-seq reads, their downstream, processed data, as well as all the scripts used to process and statistically analyze their processed data. 
