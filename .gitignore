@@ -1,0 +1,10 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+seminars/seminar06/seminar06_cache/*
+seminars/seminar05/*.bam
+seminars/seminar05/*.gtf
+assignment/analysis_cache/*
+*.Rdata
+*.Rproj
