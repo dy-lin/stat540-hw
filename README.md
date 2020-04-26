@@ -1,6 +1,8 @@
 # STAT 540 :bar_chart: :chart_with_upwards_trend: :chart_with_downwards_trend:
 Statistical Methods for High Dimensional Biology
 
+This repository is a clone of the _private_ [repository](https://github.com/STAT540-UBC/zz_Lin-Diana_STAT540_2020) under the STAT 540 organization.
+
 ## About Me
 My name is Diana Lin. I'm a first-year graduate student at the University of British Columbia (UBC) in Vancouver, BC, starting my Master of Science in Bioinformatics. In 2018, I finished my Bachelor of Science in Physiology at McGill University. Following my graduation, I completed an 8-month internship at the [Bioinformatics Technology Lab (BTL)](http://www.birollab.ca), where I currently work, located in [Canada's Michael Smith Genome Sciences Centre](http://www.bcgsc.ca).
 
