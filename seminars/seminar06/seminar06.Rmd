@@ -1,0 +1,506 @@
+---
+title: "seminar06"
+author: "Diana Lin"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = TRUE)
+```
+## Deliverables
+
+1. [Heatmap](#heatmap)
+2. [Dendrogram](#dendrogram)
+3. [PCA](#pca)
+
+## Setup
+
+Load the libraries:
+```{r load pkg}
+library(RColorBrewer)
+library(cluster)
+library(pvclust)
+library(xtable)
+library(limma)
+library(plyr)
+library(lattice)
+library(RCurl)
+options(download.file.method = "curl")
+library(GEOquery)
+library(knitr)
+library(pheatmap)
+library(here)
+library(ggplot2)
+```
+
+Download the data:
+```{r download data}
+if (file.exists(here::here("seminars", "seminar06", "GSE70213.Rdata"))) {
+  # if previously downloaded
+  load(here::here("seminars", "seminar06", "GSE70213.Rdata"))
+} else {
+  # Get geo object that contains our data and phenotype information
+  geo_obj <- getGEO("GSE70213", GSEMatrix = TRUE)
+  geo_obj <- geo_obj[[1]]
+  save(geo_obj,
+       file = here::here("seminars", "seminar06", "GSE70213.Rdata"))
+}
+```
+
+Getting the expression data:
+```{r load data}
+data <- exprs(geo_obj)
+```
+
+Getting the covariate data:
+```{r covariate}
+prDes <-
+  pData(geo_obj)[, c("organism_ch1", "title", colnames(pData(geo_obj))[grep("characteristics",
+                                                                            colnames(pData(geo_obj)))])]
+```
+
+Cleaning the covariate data:
+```{r clean}
+colnames(prDes) = c("organism", "sample_name", "tissue", "genotype", "sex", "age")
+prDes$tissue = as.factor(gsub("tissue: ", "", prDes$tissue))
+prDes$genotype = as.factor(gsub("genotype: ", "", prDes$genotype))
+prDes$sex = as.factor(gsub("Sex: ", "", prDes$sex))
+prDes$age = gsub("age: ", "", prDes$age)
+```
+
+## Exploratory Analysis
+
+```{r look data}
+kable(head(data[, 1:5]))
+dim(data)
+kable(head(prDes))
+dim(prDes)
+```
+
+Frequency histogram to see how the gene values are spread across our dataset:
+```{r hist}
+hist(data, col = "gray", main = "GSE70213 - Histogram")
+```
+
+Since there are a lot of values < 1000, we use a log~2~ scale to transform the data:
+
+```{r log hist}
+hist(log2(data + 1), col = "gray", main = "GSE70213 log transformed - Histogram")
+```
+
+Rescale the rows in our data object:
+```{r rescale}
+sprDat <- t(scale(t(data)))
+str(sprDat, max.level = 0, give.attr = FALSE)
+round(
+  data.frame(
+    avgBefore = rowMeans(head(data)),
+    avgAfter = rowMeans(head(sprDat)),
+    varBefore = apply(head(data), 1, var),
+    varAfter = apply(head(sprDat), 1, var)
+  ),
+  2
+)
+```
+
+Now the data for each row (one probeset) has a mean of 0 and variance of 1.
+
+## Sample Clustering
+
+1. Cluster the data using agglomerative hierarchical clustering.
+    - partitions can be visualized using a **dendrogram** at various levels of granularity -- no need to input the number of clusters
+2. Find various clustering solutions using partitional clustering methods, specifically K-means and partition around medoids (PAM).
+    - partitions are independent of each other, and the number of clusters is given as an input
+
+### Part I: Hierarchical Clustering Methods
+
+#### Hierarchical Clustering for Mice Knockout Data
+
+```{r dend}
+data_to_plot = sprDat
+# compute pairwise distances
+pr.dis <- dist(t(data_to_plot), method = "euclidean")
+
+# create a new factor representing the interaction of tissue type and genotype
+prDes$grp <- with(prDes, interaction(tissue, genotype))
+summary(prDes$grp)
+
+# compute hierarchical clustering using different linkage types
+pr.hc.s <- hclust(pr.dis, method = "single")
+pr.hc.c <- hclust(pr.dis, method = "complete")
+pr.hc.a <- hclust(pr.dis, method = "average")
+pr.hc.w <- hclust(pr.dis, method = "ward.D")
+
+# plot them
+op <- par(mar = c(0, 4, 4, 2), mfrow = c(2, 2))
+
+plot(pr.hc.s, labels = FALSE, main = "Single", xlab = "")
+plot(pr.hc.c, labels = FALSE, main = "Complete", xlab = "")
+plot(pr.hc.a, labels = FALSE, main = "Average", xlab = "")
+plot(pr.hc.w, labels = FALSE, main = "Ward", xlab = "")
+
+par(op)
+```
+
+<!-- > **Exercise:** Play with the options of the pheatmap function and compare the different heatmaps. Note that one can also use the original data data and set the option scale = "row". You will get the same heatmaps although the columns may be ordered differently (use cluster_cols = FALSE to suppress reordering). -->
+
+```{r heatmap}
+# set pheatmap clustering parameters
+clust_dist_col = "euclidean"  #‘'correlation'’ for Pearson correlation, ‘'euclidean'’, ‘'maximum'’, ‘'manhattan'’, ‘'canberra'’, ‘'binary'’ or ‘'minkowski'’
+clust_method = "ward.D2"  #‘'ward.D'’, ‘'ward.D2'’,‘'single'’, ‘'complete'’, ‘'average'’ (= UPGMA), ‘'mcquitty'’ (= WPGMA), ‘'median'’ (= WPGMC) or ‘'centroid'’ (= UPGMC)
+clust_scale = "none"  #'column', 'none', 'row'
+
+## the annotation option uses the covariate object (prDes) we defined. It should
+## have the same rownames, as the colnames in our data object (data_to_plot).
+
+pheatmap(
+  data_to_plot,
+  cluster_rows = FALSE,
+  scale = clust_scale,
+  clustering_method = clust_method,
+  clustering_distance_cols = clust_dist_col,
+  show_colnames = T,
+  show_rownames = FALSE,
+  main = "Clustering heatmap for GSE70213",
+  annotation = prDes[, c("tissue", "genotype",
+                         "grp")]
+)
+```
+
+Change the colours of the different covariates:
+```{r colour}
+## We can change the colours of the covariates
+var1 = c("orange1", "darkred")
+names(var1) = levels(prDes$tissue)
+var2 = c("grey", "black")
+names(var2) = levels(prDes$genotype)
+var3 = c("pink1", "pink3", "lightblue1", "blue3")
+names(var3) = levels(as.factor(prDes$grp))
+covar_color = list(tissue = var1,
+                   genotype = var2,
+                   grp = var3)
+
+my_heatmap_obj = pheatmap(
+  data_to_plot,
+  cluster_rows = FALSE,
+  scale = clust_scale,
+  clustering_method = clust_method,
+  clustering_distance_cols = clust_dist_col,
+  show_rownames = FALSE,
+  main = "Clustering heatmap for GSE70213",
+  annotation = prDes[,
+                     c("tissue", "genotype", "grp")],
+  annotation_colors = covar_color
+)
+```
+
+Get clusters from `pheatmap` object:
+```{r cluster heatmap}
+cluster_samples = cutree(my_heatmap_obj$tree_col, k = 10)
+# cluster_genes = cutree(my_heatmap_obj$tree_row, k=100)
+kable(cluster_samples)
+```
+
+Do the same but using `hclust`:
+
+```{r hclust}
+# identify 10 clusters
+op <- par(mar = c(1, 4, 4, 1))
+plot(pr.hc.w, labels = prDes$grp, cex = 0.6, main = "Ward showing 10 clusters")
+rect.hclust(pr.hc.w, k = 10)
+par(op)
+```
+
+Saving the heatmap:
+
+```{r save heatmap}
+# Save the heatmap to a PDF file
+pdf("GSE70213_Heatmap.pdf")
+pheatmap(data_to_plot, cluster_rows = F, scale = clust_scale, clustering_method = clust_method, 
+    clustering_distance_cols = clust_dist_col, annotation = prDes[, c("tissue", "genotype", 
+        "grp")], annotation_colors = covar_color)
+dev.off()
+```
+
+### Part II: Parametric and Alternative Non-Parametric Clustering with PCA and t-SNE
+
+#### Partitioning Methods for Mice Knockout Data
+
+K-means clustering of samples using all genes:
+```{r kmeans}
+# Objects in columns
+set.seed(31)
+k <- 5
+pr.km <- kmeans(t(data_to_plot), centers = k, nstart = 50)
+
+# We can look at the within sum of squares of each cluster
+pr.km$withinss
+
+# We can look at the composition of each cluster
+pr.kmTable <- data.frame(exptStage = prDes$grp, cluster = pr.km$cluster)
+kable(pr.kmTable)
+```
+
+Using the PAM algorithmn, to identify a suitable k:
+```{r pam}
+pr.pam <- pam(pr.dis, k = k)
+pr.pamTable <- data.frame(exptStage = prDes$grp, cluster = pr.pam$clustering)
+kable(pr.pamTable)
+```
+
+Making a silhouette plot:
+```{r silhouette}
+op <- par(mar = c(5, 1, 4, 4))
+plot(pr.pam, main = "Silhouette Plot for 5 clusters")
+par(op)
+```
+
+<!--> Take-home problem (1) Draw a plot with number of clusters in the x-axis and the average silhouette widths in the y-axis. Use the information obtained to determine if 5 was the best choice for the number of clusters.
+
+> Take-home problem (2) For a common choice of k, compare the clustering across different methods, e.g. hierarchical (pruned to specific k, obviously), k-means, PAM. You will re-discover the "label switching problem" for yourself. How does that manifest itself? How concordant are the clusterings for different methods?
+-->
+
+## Gene Clustering
+
+### A Smaller Dataset
+
+Using `limma`:
+```{r limma}
+cutoff <- 1e-05
+DesMat <- model.matrix(~grp, prDes)
+dsFit <- lmFit(sprDat, DesMat)
+dsEbFit <- eBayes(dsFit)
+dsHits <- topTable(dsEbFit, coef = grep("grp", colnames(coef(dsEbFit))), p.value = cutoff, 
+    n = Inf)
+numBHhits <- nrow(dsHits)
+
+topGenes <- rownames(dsHits)
+
+# Scaled data of topGenes
+topDat <- sprDat[topGenes, ]
+```
+
+### Agglomerative Hierarchical Clustering
+
+Plot the heatmap using the `pheatmap` function:
+```{r plot heatmap}
+pheatmap(topDat, cluster_rows = TRUE, scale = "none", clustering_method = "average", 
+    clustering_distance_cols = "euclidean", clustering_distance_rows = "euclidean", 
+    annotation = prDes[, c("tissue", "genotype", "grp")], show_rownames = FALSE, 
+    annotation_colors = covar_color)
+```
+
+Plot the heatmap using the `plot` function after making the `hclust` object:
+```{r heatmap hclust}
+geneC.dis <- dist(topDat, method = "euclidean")
+
+geneC.hc.a <- hclust(geneC.dis, method = "average")
+
+plot(geneC.hc.a, labels = FALSE, main = "Hierarchical with Average Linkage", xlab = "")
+```
+
+### Partitioning Methods
+
+Visualize a cluster using line plots:
+```{r partition}
+set.seed(1234)
+k <- 5
+kmeans.genes <- kmeans(topDat, centers = k)
+
+# choose which cluster we want
+clusterNum <- 2
+
+# Set up the axes without plotting; ylim set based on trial run.
+plot(kmeans.genes$centers[clusterNum, ], ylim = c(0, 10), type = "n", xlab = "Samples", 
+    ylab = "Relative expression")
+
+# Plot the expression of all the genes in the selected cluster in grey.
+matlines(y = t(topDat[kmeans.genes$cluster == clusterNum, ]), col = "grey")
+
+# Add the cluster center. This is last so it isn't underneath the members
+points(kmeans.genes$centers[clusterNum, ], type = "l")
+
+# Optional: colored points to show which stage the samples are from.
+points(kmeans.genes$centers[clusterNum, ], col = prDes$grp, pch = 20)
+```
+
+## Evaluating Clusters
+
+### Choosing the Right k
+
+Calculating the AIC for each choice of k:
+```{r calc k}
+set.seed(31)
+
+k_max <- 10  # the max number of clusters to explore clustering with 
+km_fit <- list()  # create empty list to store the kmeans object
+
+for (i in 1:k_max) {
+    k_cluster <- kmeans(t(sprDat), centers = i, nstart = 50)
+    km_fit[[i]] <- k_cluster
+}
+
+
+# calculate AIC
+km_AIC <- function(km_cluster) {
+    m <- ncol(km_cluster$centers)
+    n <- length(km_cluster$cluster)
+    k <- nrow(km_cluster$centers)
+    D <- km_cluster$tot.withinss
+    return(D + 2 * m * k)
+}
+```
+
+Plot the AIC vs the number of clusters:
+```{r aic vs clust}
+aic <- sapply(km_fit, km_AIC)
+plot(seq(1, k_max), aic, xlab = "Number of clusters", ylab = "AIC", pch = 20, cex = 2, 
+    main = "Clustering Samples")
+```
+
+Do the same for BIC:
+```{r bic}
+# calculate BIC
+km_BIC <- function(km_cluster) {
+    m <- ncol(km_cluster$centers)
+    n <- length(km_cluster$cluster)
+    k <- nrow(km_cluster$centers)
+    D <- km_cluster$tot.withinss
+    return(D + log(n) * m * k)
+}
+
+bic <- sapply(km_fit, km_BIC)
+plot(seq(1, k_max), bic, xlab = "Number of clusters", ylab = "BIC", pch = 20, cex = 2, 
+    main = "Clustering Samples")
+```
+
+### Statistical Methods
+
+Identify the most stable clustering arising from hierarchical clustering:
+```{r bootstrap}
+pvc <- pvclust(topDat, nboot = 100)
+plot(pvc, labels = prDes$grp, cex = 0.6)
+pvrect(pvc, alpha = 0.95)
+```
+
+## Feature Reduction
+
+### PCA Plots
+
+Plot a PCA plot using `prcomp()` (or `svd()`):
+```{r pca}
+pcs <- prcomp(sprDat, center = FALSE, scale = FALSE)
+
+# scree plot
+plot(pcs)
+
+# append the rotations for the first 10 PCs to the phenodata
+prinComp <- cbind(prDes, pcs$rotation[rownames(prDes), 1:10])
+
+# scatter plot showing us how the first few PCs relate to covariates
+plot(prinComp[, c("genotype", "tissue", "PC1", "PC2", "PC3")], pch = 19, cex = 0.8)
+```
+
+Spread of the samples, explained by their 2 principal components:
+```{r spread}
+plot(prinComp[, c("PC1", "PC2")], pch = 21, cex = 1.5)
+```
+
+Localization of the covariate `tissue` in the different clusters:
+```{r tissue}
+plot(prinComp[, c("PC1", "PC2")], bg = prDes$tissue, pch = 21, cex = 1.5)
+legend(list(x = 0.2, y = 0.3), as.character(levels(prDes$tissue)), pch = 21, pt.bg = c(1, 
+    2, 3, 4, 5))
+```
+
+Localization of the covariate `genotype` in the different clusters:
+```{r genotype}
+plot(prinComp[, c("PC1", "PC2")], bg = prDes$genotype, pch = 21, cex = 1.5)
+legend(list(x = 0.2, y = 0.3), as.character(levels(prDes$genotype)), pch = 21, pt.bg = c(1, 
+    2, 3, 4, 5))
+```
+
+Assess how much of the total variance is captured by each principal component:
+```{r pca total var}
+# Get the subset of PCs that capture the most variance in your predictors
+summary(pcs)
+```
+
+Select the rotated data from the first `n` components:
+```{r pcs2dim}
+pcs_2dim = prcomp(sprDat, center = FALSE, scale = FALSE, tol = 0.8)
+```
+
+### t-SNE Plots
+
+```{r tsne}
+library(Rtsne)
+colors = rainbow(length(unique(prDes$grp)))
+names(colors) = unique(prDes$grp)
+tsne <- Rtsne(unique(t(sprDat)), dims = 2, perplexity = 0.1, verbose = TRUE, max_iter = 100)
+
+plot(tsne$Y, main = "tsne")
+text(tsne$Y, labels = prDes$grp, col = colors[prDes$grp])
+
+tsne_p1 <- Rtsne(unique(t(sprDat)), dims = 2, perplexity = 1, verbose = TRUE, max_iter = 100)
+
+plot(tsne_p1$Y, main = "tsne")
+text(tsne_p1$Y, labels = prDes$grp, col = colors[prDes$grp])
+```
+
+## Deliverables
+
+### Heatmap
+> Regenerate the pheatmap clustering plot for the top genes, selected from limma, using clustering distance: correlation, and clustering method: mcquitty.
+
+To construct the heatmap using the top genes, the `topDat` tibble from the `limma` output was used. The parameter `clustering_method` was changed to `mcquitty` and the `clustering_distance_cols` parameter was changed to `correlation`.
+
+```{r heatmap deliverable}
+pheatmap(topDat, 
+         cluster_rows = FALSE, 
+         scale = "none", 
+         clustering_method = "mcquitty", 
+         clustering_distance_cols = "correlation",
+         show_colnames = T, 
+         show_rownames = FALSE, 
+         main = "Clustering heatmap for GSE70213", 
+         annotation = prDes[, c("tissue", "genotype", 
+      "grp")])
+```
+
+
+### Dendrogram
+> Regenerate the dendrogram on the samples of this heatmap using the `hclust` and `dist` functions.
+
+To construct the dendrogram using `clustering distance: correlation` and `clustering method: mcquitty`, a distance matrix was created using `as.dist()`, with the input as `1-cor(data)`, and then divided by 2 to scale it in order to see the sample labels.
+
+```{r dendrogram deliverable}
+
+# heat map above using clustering distance: correlation; clustering method: mcquitty
+
+pr.dis2 <- as.dist((1-cor(topDat))/2)
+pr.hc2 <- hclust(pr.dis2, method = "mcquitty")
+
+plot(pr.hc2, main="mcquitty", xlab="")
+```
+
+```{r dendrogram deliverable2, eval = FALSE}
+
+# heat map above using clustering distance: correlation; clustering method: mcquitty
+
+pr.dis <- as.dist(1-cor(topDat))
+pr.hc <- hclust(pr.dis, method = "mcquitty")
+
+plot(pr.hc, labels = FALSE, main = "mcquitty", xlab = "")
+```
+
+### PCA
+> Plot the data for this analyses along PCs 1 and 2 using `ggplot` instead base plotting. Color the points by tissue.
+
+The plot shows that PC2 is tissue, as the points corresponding to the quadriceps cluster towards the top, and the soleus tissue clusters toward the bottom.
+
+```{r pca deliverable}
+ggplot(prinComp, aes(x = PC1, y = PC2)) +
+  geom_point(aes(colour = tissue)) +
+  ggtitle("PCA")
+```

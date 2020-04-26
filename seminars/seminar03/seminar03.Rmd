@@ -1,0 +1,284 @@
+---
+title: "seminar03"
+author: "Diana Lin"
+date: "27/01/2020"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Deliverables
+
+* [Part 2 Exercise](#part-2-exercise)
+* [Part 3 Exercise](#part-3-exercise)
+* [Part 4 Exercise](#part-4-exercise)
+  * [Density Plot](#density-plot)
+  * [Exclusion of Transcript Lengths](#exclusion-of-transcript-lengths)
+  * [Gene with Lowest P-value](#gene-with-lowest-p-value)
+
+## Part 1 - Accessing data using GEOquery
+
+Load the libraries:
+```{r load, message=FALSE, warning=FALSE}
+library(GEOquery)
+library(biomaRt)
+library(tidyverse)
+library(data.table)
+library(reshape2)
+```
+
+Get the GEO dataset:
+```{r geo}
+gds <- getGEO("GDS507")
+```
+
+Peek into the structure of the GEO object:
+```{r struct}
+str(gds)
+```
+
+Extract the metadata table and gene expression table:
+```{r meta}
+meta_data <- data.frame(
+  Sample = gds@dataTable@columns$sample,
+  disease = gds@dataTable@columns$disease.state
+)
+
+gds_data <- gds@dataTable@table
+```
+
+## Part 2 - Exploring a gene expression dataset
+
+Peek into the data:
+```{r peek}
+head(gds_data)
+```
+
+How many rows?
+```{r rows}
+nrow(gds_data)
+```
+
+How many columns?
+```{r cols}
+ncol(gds_data)
+```
+
+Computing the average count in each sample:
+```{r compute}
+apply(gds_data[,-c(1, 2)], 2, median)
+```
+The first and second columns are excluded because they hold the probe and gene names.
+
+Tidy our data:
+```{r tidy}
+melted_data <- melt(gds_data, id.vars = c("ID_REF", "IDENTIFIER"), var = "Sample")
+head(melted_data)
+```
+
+Calcualte the mean gene expression per sample:
+```{r calc}
+melted_data %>%
+  group_by(Sample) %>%
+  summarize(mean = mean(value))
+```
+
+Calculate mean of each probe's expression:
+```{r melt}
+(new_melted_data <- melted_data %>%
+  group_by(Sample, IDENTIFIER) %>%
+  summarize(Count = mean(value)))
+```
+
+Use `biomaRt` to look up the chromosomal location of each gene:
+```{r biomart}
+# open connection between biomaRt and R.
+human = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# function that takes in data frame, and outputs same data frame with associated chromosome annotations.
+identify_gene_names <- function(df) {
+  names(df) <- c("Sample", "hgnc_symbol", "Count")
+  names <-
+    getBM(
+      attributes = c("hgnc_symbol", "chromosome_name") ,
+      filters = "hgnc_symbol",
+      values = unique(df$hgnc_symbol),
+      mart = human
+    )
+  left_join(df, names, by = "hgnc_symbol")
+}
+
+# filter out all genes with annotations that are not numeric numbers between 1 and 23, X or Y.
+data_with_chromosome <- identify_gene_names(new_melted_data) %>%
+  filter(chromosome_name %in% c(1:23, "X", "Y"))
+```
+
+### Part 2 Exercise
+
+**Instructions:** Modify the above code to also identify the length of each gene captured in the dataset we have been working with in the above exercises. This can be done by adding “transcript_length” as attribute in getBM function. You should end up with an extra column for “transcript length”. We will use this number later.
+
+I have changed the function name `identify_gene_names` to `identify_gene_names_tx` and variable name `data_with_chromosome` to `data_with_chromosome_tx` as to not affect the dataset for the rest of the workflow:
+```{r getBM}
+human = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# function that takes in data frame, and outputs same data frame with associated chromosome annotations.
+identify_gene_names_tx <- function(df) {
+  names(df) <- c("Sample", "hgnc_symbol", "Count")
+  names <-
+    getBM(
+      attributes = c("hgnc_symbol", "chromosome_name", "transcript_length") ,
+      filters = "hgnc_symbol",
+      values = unique(df$hgnc_symbol),
+      mart = human
+    )
+  left_join(df, names, by = "hgnc_symbol")
+}
+
+# filter out all genes with annotations that are not numeric numbers between 1 and 23, X or Y.
+data_with_chromosome_tx <- identify_gene_names_tx(new_melted_data) %>%
+  filter(chromosome_name %in% c(1:23, "X", "Y"))
+
+full_data_tx <- left_join(data_with_chromosome_tx, meta_data, by = "Sample")
+```
+Here you can see the new column `transcript_length`:
+```{r show}
+data_with_chromosome_tx
+```
+
+
+Let's look at how the average expression of genes on the X chromosome changes between RCC and normal cells.
+
+First, combining the metadata file (`meta_data`) with expression table (`data_with_chromosome`) data:
+
+```{r join}
+full_data <- left_join(data_with_chromosome, meta_data, by = "Sample")
+```
+
+Group all samples by disease status, filter out non-X-chromosome genes, and then calculate the mean:
+```{r full-data}
+full_data %>%
+  group_by(disease) %>%
+  filter(chromosome_name == "X") %>%
+  summarize(mean = mean(Count))
+```
+
+## Part 3: Graphing expression data
+
+Randomly sample 100 probes:
+```{r sample}
+set.seed(5747540)
+sample_to_choose <- sample(1:length(unique(full_data$hgnc_symbol)), size = 100)
+names_to_choose <- as.character(unique(full_data$hgnc_symbol)[sample_to_choose])
+```
+
+Plot:
+```{r plot}
+full_data %>% 
+    filter(hgnc_symbol %in% names_to_choose) %>% 
+    group_by(Sample) %>% 
+    ggplot(aes(x = as.factor(chromosome_name), y = Count)) + geom_point()
+```
+
+### Part 3 Exercise
+**Instructions:** By adding one additional function to the code above, calculate the sum of all counts in each sample and divide each expression value by that sum (hint: use mutate). Remember, you can add multiple new columns using mutate by separating each column with a comma (i.e mutate(x = c(“a”, “b”), y = c(“d”, “c”))). Plot this new transformed column.
+
+```{r mutate}
+full_data %>%
+  filter(hgnc_symbol %in% names_to_choose) %>%
+  group_by(Sample) %>%
+  mutate(sum_counts = sum(Count), normalized_count = Count/sum_counts) %>%
+  ggplot(aes(x = as.factor(chromosome_name), y = normalized_count)) + geom_point()
+```
+
+## Part 4 - Analyzing the results of statistical tests
+
+Perform a T-test for each gene:
+
+```{r ttest}
+full_data %>% 
+  group_by(hgnc_symbol) %>% 
+  summarize( pvalue = t.test(Count ~ disease)$p.value)
+```
+
+### Part 4 Exercise
+
+#### Density Plot
+**Instructions:** Make a density plot using geom_density() graph of the p-value distributions of the above t-test. 
+```{r p4}
+full_data_p <- full_data %>% 
+  group_by(hgnc_symbol) %>% 
+  summarize( pvalue = t.test(Count ~ disease)$p.value)
+
+full_data_p %>%
+  ggplot(aes(x = pvalue)) +
+  geom_density() +
+  ggtitle("The RIGHT Plot")
+```
+
+#### Exclusion of Transcript Lengths
+
+**Instructions:** Note that if you acquired transcript lengths, you should NOT be using that data frame for this task. Can you see why?
+
+In the data frame with `transcript_length`, there will be same rows of gene-counts pairs repeated for each isoform of each gene. This will wrongfully "punish" genes with higher number of isoforms if you calculate `mean(Count)`.
+
+For example, here is one sample and gene that has multiple entries in the `transcript_length` data frame.
+
+Here is the sample `GSM11815` and gene `A1BG` without `transcript_length`:
+
+```{r multi-ex1}
+full_data %>%
+  filter(Sample == "GSM11815", hgnc_symbol == "A1BG")
+```
+
+Here is the sample `GSM11815` and gene `A1BG` **with** `transcript_length`:
+```{r multi-ex2}
+full_data_tx %>%
+  filter(Sample == "GSM11815", hgnc_symbol == "A1BG")
+```
+
+That one sample and gene combination now has 5 rows instead of 1. With this 'duplication', the `mean(Count)` function is now biased against those with more isoforms.
+
+I will demonstrate by plotting the **WRONG** plot, using the `transcript_length` plot:
+```{r why}
+full_data_tx %>% 
+  group_by(hgnc_symbol) %>% 
+  summarize( pvalue = t.test(Count ~ disease)$p.value) %>%
+  ggplot(aes(x = pvalue)) +
+  geom_density() +
+  ggtitle("The WRONG Plot")
+```
+
+#### Gene with Lowest P-value
+**Instructions:** Also, extract a data frame of all genes with p-values lower than 0.05. Finally, extract the name of the gene with the lowest p-value.
+
+Here is the data frame with all genes with p-values lower than 0.05:
+```{r pval}
+(full_data_p_sig <- full_data_p %>%
+  filter(pvalue < 0.05))
+```
+
+To find the gene with the lowest p-value, we first sort p-value from lowest to highest using `arrange()`, and take the first line using `head()`, and then select the gene name field using `select()`:
+
+```{r lowest}
+# get lowest pvalue gene name
+lowest_gene_p <- full_data_p_sig %>%
+  arrange(pvalue) %>%
+  head(n = 1L) %>%
+  select(hgnc_symbol) %>%
+  as.character()
+
+# get lowest pvalue
+lowest_p <- full_data_p_sig %>%
+  select(pvalue) %>%
+  min()
+
+# get lowest p-value row
+full_data_p_sig %>%
+  arrange(pvalue) %>%
+  head(n = 1L)
+
+```
+
+**Conclusion**: This gene with the lowest p-value is `r lowest_gene_p`, with a p-value of `r lowest_p`.
+

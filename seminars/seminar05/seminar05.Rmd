@@ -1,0 +1,40 @@
+---
+title: "seminar05"
+author: "Diana Lin"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Setup
+
+Load the packages:
+```{r load, message = FALSE, warning = FALSE}
+library(here)
+library(tidyverse)
+```
+
+## Generating a Count Table
+```{r counts}
+HTseq_output <- read.table(
+  here("seminars", "seminar05", "hela_count.txt"),
+  sep = "\t")
+
+HTseq_output <- HTseq_output %>%
+  rename(Gene = "V1", Count = "V2")
+
+head(HTseq_output)
+summary(HTseq_output)
+```
+
+## Convert to TPM
+
+To convert counts to TPM:
+
+1. **Reads per Kilobase (RPK):** Divide the read counts by the length of the each gene in kilobases.
+2. **Reads per Kilobase per Million (RPKM):** Count up all the RPK values in a sample and divide this number by 1,000,000.
+3. **Transcripts per Million (TPM):** Divide the RPK values by the “per million” scaling factor.
+
+*Source: https://www.rna-seqblog.com/rpkm-fpkm-and-tpm-clearly-explained/*
+
